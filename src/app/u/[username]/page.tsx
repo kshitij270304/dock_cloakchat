@@ -1,7 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
-import axios, { AxiosError } from 'axios';
+import React, { useState, useEffect } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { Loader2 } from 'lucide-react';
@@ -19,11 +18,11 @@ import {
 } from '@/components/ui/form';
 import { Textarea } from '@/components/ui/textarea';
 import * as z from 'zod';
-import { ApiResponse } from '@/types/ApiResponse';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { MessageSchema } from '@/schemas/messageSchema';
 import { toast } from 'sonner';
+import { sendMessageViaSocket, getSocket } from '@/lib/socketIO';
 
 const specialChar = '||';
 
@@ -38,6 +37,31 @@ const initialMessageString =
 export default function SendMessage() {
   const params = useParams<{ username: string }>();
   const username = params.username;
+  const [isConnected, setIsConnected] = useState(false);
+
+  // Initialize WebSocket connection
+  useEffect(() => {
+    const socket = getSocket();
+    setIsConnected(socket.connected);
+
+    const handleConnect = () => {
+      setIsConnected(true);
+      console.log('Connected to WebSocket server');
+    };
+
+    const handleDisconnect = () => {
+      setIsConnected(false);
+      console.log('Disconnected from WebSocket server');
+    };
+
+    socket.on('connect', handleConnect);
+    socket.on('disconnect', handleDisconnect);
+
+    return () => {
+      socket.off('connect', handleConnect);
+      socket.off('disconnect', handleDisconnect);
+    };
+  }, []);
 
   const {
     complete,
@@ -62,20 +86,25 @@ export default function SendMessage() {
   const [isLoading, setIsLoading] = useState(false);
 
   const onSubmit = async (data: z.infer<typeof MessageSchema>) => {
+    if (!isConnected) {
+      toast.error('WebSocket connection not established. Please wait...');
+      return;
+    }
+
     setIsLoading(true);
     try {
-      const response = await axios.post<ApiResponse>('/api/send-message', {
-        ...data,
+      const response = await sendMessageViaSocket(
         username,
-        // 👇 new field: this is what gets saved as message.sender
-        sender: 'Anonymous',
-      });
+        data.content,
+        'Anonymous'
+      );
 
-      toast(response.data.message);
+      toast.success(response.message || 'Message sent successfully!');
       form.reset({ ...form.getValues(), content: '' });
-    } catch (error) {
-      const axiosError = error as AxiosError<ApiResponse>;
-      toast(axiosError.response?.data.message ?? 'Failed to send message');
+    } catch (error: any) {
+      const errorMessage = error?.message || 'Failed to send message';
+      toast.error(errorMessage);
+      console.error('Error sending message:', error);
     } finally {
       setIsLoading(false);
     }
@@ -94,6 +123,17 @@ export default function SendMessage() {
       <h1 className="text-4xl font-bold mb-6 text-center">
         Public Profile Link
       </h1>
+
+      {/* Connection Status */}
+      <div className="mb-4 p-3 rounded-md bg-blue-50 flex items-center gap-2">
+        <span className={`inline-block w-2 h-2 rounded-full ${
+          isConnected ? 'bg-green-500' : 'bg-red-500'
+        }`}></span>
+        <span className="text-sm font-medium">
+          {isConnected ? 'Connected via WebSocket' : 'Connecting...'}
+        </span>
+      </div>
+
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
           <FormField
@@ -106,6 +146,7 @@ export default function SendMessage() {
                   <Textarea
                     placeholder="Write your anonymous message here"
                     className="resize-none"
+                    disabled={!isConnected}
                     {...field}
                   />
                 </FormControl>
@@ -120,7 +161,11 @@ export default function SendMessage() {
                 Please wait
               </Button>
             ) : (
-              <Button type="submit" disabled={isLoading || !messageContent}>
+              <Button 
+                type="submit" 
+                disabled={isLoading || !messageContent || !isConnected}
+                title={!isConnected ? 'Waiting for WebSocket connection...' : ''}
+              >
                 Send It
               </Button>
             )}

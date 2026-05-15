@@ -1,12 +1,29 @@
 import UserModel, { Message } from "@/model/User.model";
 import dbConnect from '@/lib/dbConnect';
 
+/**
+ * @deprecated This endpoint is kept for backward compatibility.
+ * Please use WebSocket connection for real-time message sending.
+ * 
+ * WebSocket Usage:
+ * import { sendMessageViaSocket } from '@/lib/socketIO';
+ * await sendMessageViaSocket(username, content, sender);
+ */
+
 export async function POST(request: Request) {
   await dbConnect();
   // 👇 now also receive "sender"
   const { username, content, sender } = await request.json();
 
   try {
+    // Validate input
+    if (!username || !content) {
+      return Response.json(
+        { message: 'Username and content are required', success: false },
+        { status: 400 }
+      );
+    }
+
     const user = await UserModel.findOne({ username }).exec();
 
     if (!user) {
@@ -35,7 +52,11 @@ export async function POST(request: Request) {
     await user.save({ validateBeforeSave: false });
 
     return Response.json(
-      { message: 'Message sent successfully', success: true },
+      { 
+        message: 'Message sent successfully (REST fallback - use WebSocket for real-time updates)', 
+        success: true,
+        data: newMessage 
+      },
       { status: 201 }
     );
   } catch (error) {
