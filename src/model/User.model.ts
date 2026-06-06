@@ -42,6 +42,8 @@ export interface User extends mongoose.Document {
   isVerified: boolean;
   isAcceptingMessages: boolean;
   messages: Message[];
+  twoFactorCode?: string;
+  twoFactorCodeExpiry?: Date;
 }
 
 
@@ -81,6 +83,12 @@ const UserSchema = new Schema<User>({
   messages: {
     type: [MessageSchema],
     default: [],
+  },
+  twoFactorCode: {
+    type: String,
+  },
+  twoFactorCodeExpiry: {
+    type: Date,
   },
 });
 

@@ -1,63 +1,65 @@
-import { NextAuthOptions, User } from 'next-auth';
-import CredentialsProvider from 'next-auth/providers/credentials';
-import bcrypt from 'bcryptjs';
-import dbConnect from '@/lib/dbConnect';
-import UserModel from '@/model/User.model';
-import { Types } from 'mongoose';
-
+import { NextAuthOptions, User } from "next-auth";
+import CredentialsProvider from "next-auth/providers/credentials";
+import dbConnect from "@/lib/dbConnect";
+import UserModel from "@/model/User.model";
+import { Types } from "mongoose";
 
 interface Credentials {
-  identifier: string;
-  password: string;
+  userId?: string;
 }
 
 export const authOptions: NextAuthOptions = {
   providers: [
     CredentialsProvider({
-      id: 'credentials',
-      name: 'Credentials',
+      id: "credentials",
+      name: "Credentials",
+
       credentials: {
-        identifier: { label: 'Email or Username', type: 'text' },
-        password: { label: 'Password', type: 'password' },
+        userId: {
+          label: "User ID",
+          type: "text",
+        },
       },
 
       async authorize(
         credentials: Credentials | undefined
       ): Promise<User | null> {
+        console.log("================================");
+        console.log("[NEXTAUTH] AUTHORIZE CALLED");
+        console.log("Credentials:", credentials);
+        console.log("================================");
+
         await dbConnect();
 
-        if (!credentials) {
-          throw new Error('Missing credentials');
+        if (!credentials?.userId) {
+          console.log("[NEXTAUTH] Missing userId");
+          throw new Error("Missing userId");
         }
 
-        const { identifier, password } = credentials;
+        const user = await UserModel.findById(credentials.userId);
 
-        const user = await UserModel.findOne({
-          $or: [{ email: identifier }, { username: identifier }],
-        });
-
-        if (!user) {
-          throw new Error('No user found with this email or username');
-        }
-
-        if (!user.isVerified) {
-          throw new Error('Please verify your account before logging in');
-        }
-
-        const isPasswordCorrect = await bcrypt.compare(
-          password,
-          user.password
+        console.log(
+          "[NEXTAUTH] User Found:",
+          user
+            ? {
+                id: user._id.toString(),
+                username: user.username,
+                email: user.email,
+              }
+            : "NOT FOUND"
         );
 
-        if (!isPasswordCorrect) {
-          throw new Error('Incorrect password');
+        if (!user) {
+          throw new Error("User not found");
         }
 
-      return {
-        id: (user._id as Types.ObjectId).toString(),
-        email: user.email,
-        name: user.username,
-      };
+        console.log("[NEXTAUTH] Session Created");
+
+        return {
+          id: (user._id as Types.ObjectId).toString(),
+          email: user.email,
+          name: user.username,
+        };
       },
     }),
   ],
@@ -67,8 +69,8 @@ export const authOptions: NextAuthOptions = {
       if (user) {
         token._id = user.id;
         token.username = user.name ?? undefined;
-
       }
+
       return token;
     },
 
@@ -77,17 +79,18 @@ export const authOptions: NextAuthOptions = {
         session.user._id = token._id as string;
         session.user.username = token.username as string;
       }
+
       return session;
     },
   },
 
   session: {
-    strategy: 'jwt',
+    strategy: "jwt",
   },
 
   secret: process.env.NEXTAUTH_SECRET,
 
   pages: {
-    signIn: '/sign-in',
+    signIn: "/sign-in",
   },
 };
