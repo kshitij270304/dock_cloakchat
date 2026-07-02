@@ -1,49 +1,65 @@
-# Stage 1: Dependencies
+# -----------------------------
+# Stage 1: Install Dependencies
+# -----------------------------
 FROM node:20-alpine AS deps
+
 WORKDIR /app
+
 COPY package*.json ./
+
 RUN npm ci --legacy-peer-deps
 
-# Stage 2: Builder
+# -----------------------------
+# Stage 2: Build Application
+# -----------------------------
 FROM node:20-alpine AS builder
+
 WORKDIR /app
-COPY package*.json ./
+
+# Reuse installed dependencies
+COPY --from=deps /app/node_modules ./node_modules
+
+# Copy project files
 COPY . .
-RUN npm ci --legacy-peer-deps
+
+# Increase Node.js heap during build
+ENV NODE_OPTIONS="--max-old-space-size=2048"
+
+# Build Next.js
 RUN npm run build
 
-# Stage 3: Production
+# -----------------------------
+# Stage 3: Production Image
+# -----------------------------
 FROM node:20-alpine AS runner
+
 WORKDIR /app
 
 ENV NODE_ENV=production
 
-# Install dumb-init to handle signals properly
+# Install dumb-init
 RUN apk add --no-cache dumb-init
 
-# Create app user for security
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 nextjs
+# Create non-root user
+RUN addgroup -S nodejs && adduser -S nextjs -G nodejs
 
-# Copy files from builder
+# Copy production files
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package*.json ./
-COPY --from=builder /app/server.ts ./
-COPY --from=builder /app/tsconfig.server.json ./
+COPY --from=builder /app/server.ts ./server.ts
 COPY --from=builder /app/src ./src
+COPY --from=builder /app/tsconfig.server.json ./
 COPY --from=builder /app/tsconfig.json ./
 
-# Change ownership to nextjs user
+# Give ownership
 RUN chown -R nextjs:nodejs /app
 
 USER nextjs
 
 EXPOSE 3000
 
-# Use dumb-init to handle signals
 ENTRYPOINT ["dumb-init", "--"]
 
-# Start the application
 CMD ["npm", "start"]
