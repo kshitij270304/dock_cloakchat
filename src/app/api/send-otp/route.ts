@@ -5,11 +5,12 @@ import UserModel from "@/model/User.model";
 import { sendOTPEmail } from "@/helpers/sendOTPEmail";
 import { generateOTP, getOTPExpiry } from "@/lib/utils";
 import { setOTPInRedis } from "@/lib/redis";
+import { rateLimit } from "@/lib/ratelimiter";
 
 export async function POST(request: NextRequest) {
   try {
     console.log("[send-otp] Starting OTP request");
-    
+
     await dbConnect();
     console.log("[send-otp] Database connected");
 
@@ -40,6 +41,28 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // ============================
+    // Redis Sliding Window Rate Limiter
+    // Max 3 OTPs every 5 minutes
+    // ============================
+
+    try {
+      await rateLimit({
+        identifier: user.email,
+        prefix: "otp",
+        limit: 3,
+        window: 300,
+      });
+    } catch {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "Too many OTP requests. Please try again after 5 minutes.",
+        },
+        { status: 429 }
+      );
+    }
+
     if (!user.isVerified) {
       return NextResponse.json(
         {
@@ -67,41 +90,58 @@ export async function POST(request: NextRequest) {
     // Generate OTP
     const otp = generateOTP();
     const otpExpiry = getOTPExpiry();
-    
+
     console.log("[send-otp] Generated OTP:", otp, "Expiry:", otpExpiry);
     console.log("[send-otp] User ID before save:", user._id.toString());
 
-    // Save OTP to database (twoFactorCode for login verification)
+    // Save OTP to MongoDB
     user.twoFactorCode = otp;
     user.twoFactorCodeExpiry = otpExpiry;
 
     await user.save();
-    console.log("[send-otp] OTP saved to database for user:", user._id.toString());
-    console.log("[send-otp] Verified save - twoFactorCode:", user.twoFactorCode, "Expiry:", user.twoFactorCodeExpiry);
 
-    // Cache OTP in Redis (10 minutes expiry)
+    console.log(
+      "[send-otp] OTP saved to database for user:",
+      user._id.toString()
+    );
+
+    // Cache OTP in Redis
     try {
       await setOTPInRedis(user._id.toString(), otp, 600);
-      console.log("[send-otp] OTP cached in Redis for user:", user._id.toString());
+
+      console.log(
+        "[send-otp] OTP cached in Redis for user:",
+        user._id.toString()
+      );
     } catch (redisError) {
-      console.error("[send-otp] Redis caching failed (non-blocking):", redisError);
-      // Continue even if Redis caching fails, since we have MongoDB as fallback
+      console.error(
+        "[send-otp] Redis caching failed (non-blocking):",
+        redisError
+      );
     }
 
-    // Send OTP via email
+    // Send OTP email
     console.log("[send-otp] Sending OTP email to", user.email);
-    const emailResponse = await sendOTPEmail(user.email, user.username, otp);
-    
-        if (!emailResponse.success) {
-    console.error("[send-otp] Email sending failed:", emailResponse.message);
 
-    return NextResponse.json(
+    const emailResponse = await sendOTPEmail(
+      user.email,
+      user.username,
+      otp
+    );
+
+    if (!emailResponse.success) {
+      console.error(
+        "[send-otp] Email sending failed:",
+        emailResponse.message
+      );
+
+      return NextResponse.json(
         {
-        success: false,
-        message: emailResponse.message,
+          success: false,
+          message: emailResponse.message,
         },
         { status: 500 }
-    );
+      );
     }
 
     console.log("[send-otp] OTP sent successfully");
@@ -116,7 +156,8 @@ export async function POST(request: NextRequest) {
       { status: 200 }
     );
   } catch (error) {
-    console.error("Error in send-otp:", error);
+    console.error("[send-otp] Error:", error);
+
     return NextResponse.json(
       {
         success: false,
