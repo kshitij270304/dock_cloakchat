@@ -25,7 +25,9 @@ COPY . .
 # Increase Node.js heap during build
 ENV NODE_OPTIONS="--max-old-space-size=2048"
 
-# Build Next.js
+# Build Next.js + Compile custom server
+# (Assumes package.json build script is:
+# "build": "next build && tsc -p tsconfig.server.json")
 RUN npm run build
 
 # -----------------------------
@@ -36,6 +38,7 @@ FROM node:20-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
+ENV NODE_OPTIONS="--max-old-space-size=384"
 
 # Install dumb-init
 RUN apk add --no-cache dumb-init
@@ -43,15 +46,16 @@ RUN apk add --no-cache dumb-init
 # Create non-root user
 RUN addgroup -S nodejs && adduser -S nextjs -G nodejs
 
-# Copy application files with correct ownership
-COPY --from=builder --chown=nextjs:nodejs /app/public ./public
-COPY --from=builder --chown=nextjs:nodejs /app/.next ./.next
+# Copy production dependencies
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules ./node_modules
 COPY --from=builder --chown=nextjs:nodejs /app/package*.json ./
-COPY --from=builder --chown=nextjs:nodejs /app/server.ts ./server.ts
-COPY --from=builder --chown=nextjs:nodejs /app/src ./src
-COPY --from=builder --chown=nextjs:nodejs /app/tsconfig.server.json ./tsconfig.server.json
-COPY --from=builder --chown=nextjs:nodejs /app/tsconfig.json ./tsconfig.json
+
+# Copy Next.js production build
+COPY --from=builder --chown=nextjs:nodejs /app/.next ./.next
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
+
+# Copy compiled server output
+COPY --from=builder --chown=nextjs:nodejs /app/dist ./dist
 
 USER nextjs
 
@@ -59,4 +63,4 @@ EXPOSE 3000
 
 ENTRYPOINT ["dumb-init", "--"]
 
-CMD ["npm", "start"]
+CMD ["node", "dist/server.js"]
